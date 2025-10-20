@@ -505,3 +505,580 @@ export const getAvailableCabang = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+// ==================== REGISTRATION FUNCTIONS ====================
+
+// Generate next registration number
+const generateRegistrationNumber = async () => {
+    try {
+        console.log('🔢 Generating registration number...');
+        
+        // First, try to check if the table and column exist
+        const [checkColumn] = await pool.execute(`
+            SELECT COUNT(*) as count 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = 'pdam_mapping' 
+            AND TABLE_NAME = 'pelanggan' 
+            AND COLUMN_NAME = 'no_registrasi'
+        `);
+        
+        if (checkColumn[0].count === 0) {
+            console.log('⚠️  no_registrasi column does not exist, creating...');
+            await pool.execute(`ALTER TABLE pelanggan ADD COLUMN no_registrasi VARCHAR(10) NULL UNIQUE`);
+        }
+        
+        const [rows] = await pool.execute(`
+            SELECT MAX(CAST(SUBSTRING(no_registrasi, 1, 5) AS UNSIGNED)) as max_num 
+            FROM pelanggan 
+            WHERE no_registrasi IS NOT NULL AND no_registrasi != ''
+        `);
+        
+        const nextNum = (rows[0]?.max_num || 0) + 1;
+        const regNumber = nextNum.toString().padStart(5, '0');
+        
+        console.log('✅ Generated registration number:', regNumber);
+        return regNumber;
+    } catch (error) {
+        console.error('💥 Error generating registration number:');
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        
+        // Fallback: use timestamp-based number
+        const fallbackNum = Date.now().toString().slice(-5);
+        console.log('🔄 Using fallback registration number:', fallbackNum);
+        return fallbackNum;
+    }
+};
+
+// Create new pelanggan registration
+export const createPelangganRegistration = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'User tidak terautentikasi'
+            });
+        }
+
+        const {
+            nama_pelanggan, email, no_telpon, alamat, 
+            latitude, longitude, jumlah_jiwa, catatan_registrasi,
+            desa_id, kecamatan_id
+        } = req.body;
+
+        console.log('📥 Registration data received:', {
+            nama_pelanggan: nama_pelanggan || 'NOT SET',
+            email: email || 'NOT SET', 
+            no_telpon: no_telpon || 'NOT SET',
+            alamat: alamat || 'NOT SET',
+            latitude: latitude || 'NOT SET',
+            longitude: longitude || 'NOT SET',
+            jumlah_jiwa: jumlah_jiwa || 'NOT SET',
+            catatan_registrasi: catatan_registrasi || 'NOT SET',
+            desa_id: desa_id || 'NOT SET',
+            kecamatan_id: kecamatan_id || 'NOT SET'
+        });
+        console.log('📁 Files received:', req.files);
+
+        // Validate required fields
+        if (!nama_pelanggan?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Nama pelanggan wajib diisi'
+            });
+        }
+
+        if (!email?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email wajib diisi'
+            });
+        }
+
+        if (!no_telpon?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Nomor telepon wajib diisi'
+            });
+        }
+
+        if (!alamat?.trim()) {
+            return res.status(400).json({
+                success: false,
+                message: 'Alamat wajib diisi'
+            });
+        }
+
+        if (!latitude || latitude === '' || !longitude || longitude === '') {
+            return res.status(400).json({
+                success: false,
+                message: 'Lokasi (latitude & longitude) wajib dipilih di peta'
+            });
+        }
+
+        // Validate required files
+        if (!req.files?.foto_rumah?.[0] || !req.files?.foto_ktp?.[0] || !req.files?.foto_kk?.[0]) {
+            return res.status(400).json({
+                success: false,
+                message: 'Foto rumah, KTP, dan KK wajib diupload'
+            });
+        }
+
+        // Generate registration number
+        const noRegistrasi = await generateRegistrationNumber();
+        
+        // Validate and sanitize all parameters
+        const cleanNama = nama_pelanggan?.trim() || null;
+        const cleanEmail = email?.trim() || null;
+        const cleanTelpon = no_telpon?.trim() || null;
+        const cleanAlamat = alamat?.trim() || null;
+        const cleanCatatan = catatan_registrasi?.trim() || null;
+
+        // Parse coordinates with validation
+        const parsedLatitude = latitude && latitude !== '' ? parseFloat(latitude) : null;
+        const parsedLongitude = longitude && longitude !== '' ? parseFloat(longitude) : null;
+        const parsedJumlahJiwa = jumlah_jiwa && jumlah_jiwa !== '' ? parseInt(jumlah_jiwa) : 1;
+        const parsedDesaId = desa_id && desa_id !== '' ? parseInt(desa_id) : null;
+        const parsedKecamatanId = kecamatan_id && kecamatan_id !== '' ? parseInt(kecamatan_id) : null;
+
+        // Validate coordinates are valid numbers
+        if (parsedLatitude !== null && (isNaN(parsedLatitude) || parsedLatitude < -90 || parsedLatitude > 90)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Latitude tidak valid'
+            });
+        }
+        
+        if (parsedLongitude !== null && (isNaN(parsedLongitude) || parsedLongitude < -180 || parsedLongitude > 180)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Longitude tidak valid'
+            });
+        }
+
+        // Prepare file paths with null safety
+        const fotoRumahUrl = req.files?.foto_rumah?.[0]?.filename ? `/uploads/images/${req.files.foto_rumah[0].filename}` : null;
+        const fotoKtpUrl = req.files?.foto_ktp?.[0]?.filename ? `/uploads/images/${req.files.foto_ktp[0].filename}` : null;
+        const fotoKkUrl = req.files?.foto_kk?.[0]?.filename ? `/uploads/images/${req.files.foto_kk[0].filename}` : null;
+
+        // Debug logging
+        console.log('📝 Registration parameters:');
+        console.log('noRegistrasi:', noRegistrasi);
+        console.log('cleanNama:', cleanNama);
+        console.log('cleanEmail:', cleanEmail);
+        console.log('cleanTelpon:', cleanTelpon);
+        console.log('cleanAlamat:', cleanAlamat);
+        console.log('parsedLatitude:', parsedLatitude);
+        console.log('parsedLongitude:', parsedLongitude);
+        console.log('parsedJumlahJiwa:', parsedJumlahJiwa);
+        console.log('parsedDesaId:', parsedDesaId);
+        console.log('parsedKecamatanId:', parsedKecamatanId);
+        console.log('cleanCatatan:', cleanCatatan);
+        console.log('fotoRumahUrl:', fotoRumahUrl);
+        console.log('fotoKtpUrl:', fotoKtpUrl);
+        console.log('fotoKkUrl:', fotoKkUrl);
+        console.log('userId:', userId);
+
+        // Insert registration
+        const [result] = await pool.execute(`
+            INSERT INTO pelanggan (
+                no_registrasi, nama_pelanggan, email, no_telpon, alamat,
+                latitude, longitude, jumlah_jiwa, catatan_registrasi,
+                foto_rumah_url, foto_ktp_url, foto_kk_url,
+                desa_id, kecamatan_id,
+                status_registrasi, status_pelanggan, user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'tidak aktif', ?)
+        `, [
+            noRegistrasi || null,
+            cleanNama,
+            cleanEmail, 
+            cleanTelpon,
+            cleanAlamat,
+            parsedLatitude,
+            parsedLongitude, 
+            parsedJumlahJiwa,
+            cleanCatatan,
+            fotoRumahUrl,
+            fotoKtpUrl,
+            fotoKkUrl,
+            parsedDesaId,
+            parsedKecamatanId,
+            userId || null
+        ]);
+
+        res.status(201).json({
+            success: true,
+            message: 'Registrasi berhasil disubmit',
+            no_registrasi: noRegistrasi,
+            registrationId: result.insertId
+        });
+    } catch (error) {
+        console.error('💥 Error creating registration:');
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error stack:', error.stack);
+        
+        let errorMessage = 'Error creating registration';
+        
+        if (error.code === 'ER_NO_SUCH_TABLE') {
+            errorMessage = 'Database table not found';
+        } else if (error.code === 'ER_BAD_FIELD_ERROR') {
+            errorMessage = 'Database field not found - please run migrations';
+        } else if (error.code === 'ER_ACCESS_DENIED_ERROR') {
+            errorMessage = 'Database access denied';
+        } else if (error.code === 'ECONNREFUSED') {
+            errorMessage = 'Database connection refused';
+        }
+        
+        res.status(500).json({
+            success: false,
+            message: errorMessage + ': ' + error.message,
+            error_code: error.code,
+            error_details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
+};
+
+// Get registration by ID (admin only)
+export const getRegistrationById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const [rows] = await pool.execute(`
+            SELECT p.*, u.full_name as user_name, u.email as user_email
+            FROM pelanggan p
+            LEFT JOIN users u ON p.user_id = u.id
+            WHERE p.id = ? AND p.status_registrasi IS NOT NULL
+        `, [id]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Registration not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: rows[0]
+        });
+    } catch (error) {
+        console.error('Error fetching registration:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching registration'
+        });
+    }
+};
+
+// Approve registration (admin only)
+export const approveRegistration = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { 
+            id_pelanggan, cabang_id, rayon_id, golongan_id, kelompok_id,
+            jenis_meter, tanggal_pemasangan, distribusi, sumber,
+            kondisi_meter, kondisi_lingkungan, kategori
+        } = req.body;
+        const adminId = req.user.id;
+
+        // Validate required fields for approval
+        if (!id_pelanggan) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID Pelanggan (No SL) wajib diisi untuk approval'
+            });
+        }
+
+        // Check if registration exists and is pending
+        const [existing] = await pool.execute(
+            'SELECT * FROM pelanggan WHERE id = ? AND status_registrasi = "pending"',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Registration not found or not pending'
+            });
+        }
+
+        // Check if id_pelanggan already exists
+        const [duplicate] = await pool.execute(
+            'SELECT id FROM pelanggan WHERE id_pelanggan = ? AND id != ?',
+            [id_pelanggan, id]
+        );
+
+        if (duplicate.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID Pelanggan sudah digunakan'
+            });
+        }
+
+        // Update registration with approval data
+        await pool.execute(`
+            UPDATE pelanggan SET 
+                status_registrasi = 'approved',
+                id_pelanggan = ?,
+                status_pelanggan = 'aktif',
+                cabang_id = ?,
+                rayon_id = ?,
+                golongan_id = ?,
+                kelompok_id = ?,
+                jenis_meter = ?,
+                tanggal_pemasangan = ?,
+                distribusi = ?,
+                sumber = ?,
+                kondisi_meter = ?,
+                kondisi_lingkungan = ?,
+                kategori = ?,
+                approved_by = ?,
+                approved_at = NOW()
+            WHERE id = ?
+        `, [
+            id_pelanggan, cabang_id || null, rayon_id || null, 
+            golongan_id || null, kelompok_id || null, jenis_meter || null,
+            tanggal_pemasangan || null, distribusi || null, sumber || null,
+            kondisi_meter || null, kondisi_lingkungan || null, 
+            kategori || 'jadwal harian', adminId, id
+        ]);
+
+        res.json({
+            success: true,
+            message: 'Registrasi berhasil disetujui'
+        });
+    } catch (error) {
+        console.error('Error approving registration:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error approving registration: ' + error.message
+        });
+    }
+};
+
+// Get pending registrations (admin only)
+export const getPendingRegistrations = async (req, res) => {
+    try {
+        const [rows] = await pool.execute(`
+            SELECT p.*, u.email as user_email, 
+                   c.kode_unit, c.nama_unit as cabang_nama,
+                   d.nama_desa,
+                   k.nama_kecamatan, k.kode_kecamatan,
+                   r.nama_rayon, r.kode_rayon,
+                   g.nama_golongan, g.kode_golongan,
+                   kl.nama_kelompok, kl.kode_kelompok
+            FROM pelanggan p 
+            JOIN users u ON p.user_id = u.id 
+            LEFT JOIN cabang c ON p.cabang_id = c.id
+            LEFT JOIN desa d ON p.desa_id = d.id
+            LEFT JOIN kecamatan k ON p.kecamatan_id = k.id
+            LEFT JOIN rayon r ON p.rayon_id = r.id
+            LEFT JOIN golongan g ON p.golongan_id = g.id
+            LEFT JOIN kelompok kl ON p.kelompok_id = kl.id
+            WHERE p.status_registrasi = 'pending'
+            ORDER BY p.created_at DESC
+        `);
+
+        res.json({
+            success: true,
+            data: rows
+        });
+    } catch (error) {
+        console.error('Error fetching pending registrations:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching pending registrations: ' + error.message
+        });
+    }
+};
+
+// Get registration statistics (admin only)
+export const getRegistrationStats = async (req, res) => {
+    try {
+        const [stats] = await pool.execute(`
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN status_registrasi = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status_registrasi = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status_registrasi = 'rejected' THEN 1 ELSE 0 END) as rejected,
+                SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) as today
+            FROM pelanggan 
+            WHERE no_registrasi IS NOT NULL
+        `);
+
+        res.json({
+            success: true,
+            data: stats[0]
+        });
+    } catch (error) {
+        console.error('Error fetching registration stats:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching registration stats: ' + error.message
+        });
+    }
+};
+
+// Get all registrations (admin only)
+export const getAllRegistrations = async (req, res) => {
+    try {
+        const { status } = req.query;
+        let whereClause = 'WHERE p.no_registrasi IS NOT NULL';
+        let params = [];
+
+        if (status && status !== 'all') {
+            whereClause += ' AND p.status_registrasi = ?';
+            params.push(status);
+        }
+
+        const [rows] = await pool.execute(`
+            SELECT p.*, u.email as user_email, 
+                   c.kode_unit, c.nama_unit as cabang_nama,
+                   d.nama_desa,
+                   k.nama_kecamatan, k.kode_kecamatan,
+                   r.nama_rayon, r.kode_rayon,
+                   g.nama_golongan, g.kode_golongan,
+                   kl.nama_kelompok, kl.kode_kelompok,
+                   approved_user.full_name as approved_by_name
+            FROM pelanggan p 
+            JOIN users u ON p.user_id = u.id 
+            LEFT JOIN users approved_user ON p.approved_by = approved_user.id
+            LEFT JOIN cabang c ON p.cabang_id = c.id
+            LEFT JOIN desa d ON p.desa_id = d.id
+            LEFT JOIN kecamatan k ON p.kecamatan_id = k.id
+            LEFT JOIN rayon r ON p.rayon_id = r.id
+            LEFT JOIN golongan g ON p.golongan_id = g.id
+            LEFT JOIN kelompok kl ON p.kelompok_id = kl.id
+            ${whereClause}
+            ORDER BY p.created_at DESC
+        `, params);
+
+        res.json({
+            success: true,
+            data: rows
+        });
+    } catch (error) {
+        console.error('Error fetching all registrations:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching registrations: ' + error.message
+        });
+    }
+};
+
+// Update registration status (admin only)
+export const updateRegistrationStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, ...updateData } = req.body;
+        const adminId = req.user.id;
+
+        // Validate status
+        const validStatuses = ['pending', 'approved', 'rejected'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status. Must be pending, approved, or rejected'
+            });
+        }
+
+        // Check if registration exists
+        const [existing] = await pool.execute(
+            'SELECT * FROM pelanggan WHERE id = ?',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Registration not found'
+            });
+        }
+
+        // Prepare update fields
+        let updateFields = ['status_registrasi = ?'];
+        let updateValues = [status];
+
+        if (status === 'approved' || status === 'rejected') {
+            updateFields.push('approved_by = ?', 'approved_at = NOW()');
+            updateValues.push(adminId);
+        }
+
+        // Add additional fields from updateData
+        Object.keys(updateData).forEach(key => {
+            updateFields.push(`${key} = ?`);
+            updateValues.push(updateData[key]);
+        });
+
+        updateValues.push(id);
+
+        await pool.execute(`
+            UPDATE pelanggan SET ${updateFields.join(', ')}
+            WHERE id = ?
+        `, updateValues);
+
+        res.json({
+            success: true,
+            message: `Registrasi berhasil diubah ke status ${status}`
+        });
+    } catch (error) {
+        console.error('Error updating registration status:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating registration status: ' + error.message
+        });
+    }
+};
+
+// Reject registration (admin only)
+export const rejectRegistration = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rejected_reason } = req.body;
+        const adminId = req.user.id;
+
+        if (!rejected_reason) {
+            return res.status(400).json({
+                success: false,
+                message: 'Alasan penolakan wajib diisi'
+            });
+        }
+
+        // Check if registration exists and is pending
+        const [existing] = await pool.execute(
+            'SELECT * FROM pelanggan WHERE id = ? AND status_registrasi = "pending"',
+            [id]
+        );
+
+        if (existing.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Registration not found or not pending'
+            });
+        }
+
+        // Update registration with rejection
+        await pool.execute(`
+            UPDATE pelanggan SET 
+                status_registrasi = 'rejected',
+                rejected_reason = ?,
+                approved_by = ?,
+                approved_at = NOW()
+            WHERE id = ?
+        `, [rejected_reason, adminId, id]);
+
+        res.json({
+            success: true,
+            message: 'Registrasi berhasil ditolak'
+        });
+    } catch (error) {
+        console.error('Error rejecting registration:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error rejecting registration: ' + error.message
+        });
+    }
+};

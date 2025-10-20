@@ -13,7 +13,16 @@ import {
     transferPelanggan,
     getAvailableUsers,
     bulkAssignPelanggan,
-    getAvailableCabang
+    getAvailableCabang,
+    // Registration functions
+    createPelangganRegistration,
+    getAllRegistrations,
+    getPendingRegistrations,
+    getRegistrationById,
+    getRegistrationStats,
+    approveRegistration,
+    rejectRegistration,
+    updateRegistrationStatus
 } from '../controllers/pelangganController.js';
 
 const router = express.Router();
@@ -25,6 +34,25 @@ console.log('  GET /admin/available-cabang');
 console.log('  POST /admin/create-for-user');
 console.log('  PUT /admin/transfer/:id');
 console.log('  PUT /admin/bulk-assign');
+console.log('  POST /registration');
+console.log('  GET /registrations');
+console.log('  GET /registrations/pending');
+
+// Registration routes (HARUS DI ATAS route dengan parameter)
+router.post('/registration', authenticateToken, upload.fields([
+    { name: 'foto_rumah', maxCount: 1 },
+    { name: 'foto_ktp', maxCount: 1 },
+    { name: 'foto_kk', maxCount: 1 }
+]), createPelangganRegistration);
+
+// Admin registration management routes
+router.get('/registrations', authenticateAdmin, getAllRegistrations);
+router.get('/registrations/pending', authenticateAdmin, getPendingRegistrations);
+router.get('/registrations/stats', authenticateAdmin, getRegistrationStats);
+router.get('/registration/:id', authenticateAdmin, getRegistrationById);
+router.patch('/registration/:id/approve', authenticateAdmin, approveRegistration);
+router.patch('/registration/:id/reject', authenticateAdmin, rejectRegistration);
+router.patch('/registration/:id/status', authenticateAdmin, updateRegistrationStatus);
 
 // Routes khusus admin (HARUS DI ATAS route dengan parameter)
 router.get('/admin/all', authenticateAdmin, getAllPelangganAdmin);
