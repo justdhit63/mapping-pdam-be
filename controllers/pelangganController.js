@@ -130,7 +130,8 @@ export const createPelanggan = async (req, res) => {
             longitude, latitude, cabang_id, desa_id, kecamatan_id,
             rayon_id, golongan_id, kelompok_id,
             distribusi, sumber, kondisi_meter, kondisi_lingkungan,
-            kategori, status_pelanggan
+            kategori, status_pelanggan,
+            stand_meter, nomer_water_meter, merk_meter, ukuran_water_meter, kondisi_water_meter
         } = req.body;
 
         const userId = req.user.id; // Dari JWT token
@@ -145,14 +146,17 @@ export const createPelanggan = async (req, res) => {
             (user_id, id_pelanggan, nama_pelanggan, no_telpon, alamat, jumlah_jiwa, 
              jenis_meter, tanggal_pemasangan, longitude, latitude, foto_rumah_url, 
              cabang_id, desa_id, kecamatan_id, rayon_id, golongan_id, kelompok_id,
-             distribusi, sumber, kondisi_meter, kondisi_lingkungan, kategori, status_pelanggan)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             distribusi, sumber, kondisi_meter, kondisi_lingkungan, kategori, status_pelanggan,
+             stand_meter, nomer_water_meter, merk_meter, ukuran_water_meter, kondisi_water_meter)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [userId, id_pelanggan, nama_pelanggan, no_telpon, alamat, jumlah_jiwa,
              jenis_meter, tanggal_pemasangan, longitude, latitude, foto_rumah_url, 
              cabang_id || null, desa_id || null, kecamatan_id || null,
              rayon_id || null, golongan_id || null, kelompok_id || null,
              distribusi || null, sumber || null, kondisi_meter || null, kondisi_lingkungan || null,
-             kategori || null, status_pelanggan || 'aktif']
+             kategori || null, status_pelanggan || 'aktif',
+             stand_meter || null, nomer_water_meter || null, merk_meter || null, 
+             ukuran_water_meter || null, kondisi_water_meter || null]
         );
 
         res.status(201).json({
@@ -180,7 +184,8 @@ export const updatePelanggan = async (req, res) => {
             'jenis_meter', 'tanggal_pemasangan', 'longitude', 'latitude',
             'cabang_id', 'desa_id', 'kecamatan_id', 'rayon_id', 'golongan_id', 'kelompok_id',
             'distribusi', 'sumber', 'kondisi_meter', 'kondisi_lingkungan',
-            'kategori', 'status_pelanggan'
+            'kategori', 'status_pelanggan',
+            'stand_meter', 'nomer_water_meter', 'merk_meter', 'ukuran_water_meter', 'kondisi_water_meter'
         ];
 
         // Hanya ambil field yang ada di req.body dan diperbolehkan
